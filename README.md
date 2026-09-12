@@ -1,71 +1,125 @@
-# SOCKS-туннель через зарубежный сервер
+# SOCKS-over-SSH tunnel
 
-Настройка безопасного SOCKS5-туннеля через SSH для обхода региональной блокировки.
+Secure SOCKS5 tunnel through a remote (relay) server to bypass regional
+network blocks, e.g. when web-search services reject your local IP.
 
-- **Локальная машина** (этот сервер, IP заблокирован) — ssh-клиент с локальным SOCKS.
-- **Зарубежный сервер** (второй сервер) — настраивается вручную напрямую на нём (скрипт `setup-remote.sh`).
+- **Local machine** (blocked region) — SSH client exposing a SOCKS5 proxy.
+- **Remote server** (foreign IP) — stocks an `sshd` and a dedicated,
+  restricted tunnel user. Nothing else needs to be installed.
 
-Трафик идёт внутри зашифрованного SSH-канала. На сервере ничего кроме sshd не ставится.
+All traffic travels inside an encrypted SSH channel. The SOCKS endpoint
+listens only on `127.0.0.1`.
 
-## Настройка
+## How it works
 
-### 1. Локальная машина
+`ssh -D` on the local machine binds a SOCKS5 proxy to
+`127.0.0.1:1080`. Requests to that port are forwarded through the SSH
+connection to the remote server and exit from its public IP. The remote
+side runs no additional software: OpenSSH provides the SOCKS endpoint
+via dynamic forwarding (`-D`).
+
+## Requirements
+
+- OpenSSH client on the local machine.
+- Root access (`sudo`) on the remote server.
+- An existing key-based login to the remote server (the setup disables
+  password authentication - otherwise you may lock yourself out).
+- `curl` locally for the `check` command.
+
+## Quick start
+
+### 1. Local machine
 
 ```bash
-cd ~/socks-tunnel
+cd socks-tunnel
 ./setup-local.sh
 ```
 
-Скрипт создаёт ключ `~/.ssh/tunnel` (и `.pub`), блок `Host tunnel` в `~/.ssh/config`
-и печатает публичный ключ — он понадобится на шаге 2.
+This generates the keypair `~/.ssh/tunnel` (and `.pub`), appends a
+`Host tunnel` block to `~/.ssh/config`, and prints the public key you
+need for the next step. It never connects to the remote server.
 
-### 2. Зарубежный сервер (вручную, напрямую на нём)
+### 2. Remote server (run manually on that host)
 
-Перенеси туда `setup-remote.sh` и публичный ключ (например `scp`):
+Transfer the script and the public key there:
+
 ```bash
-scp setup-remote.sh ~/.ssh/tunnel.pub user@server:~/
+scp socks-tunnel/setup-remote.sh ~/.ssh/tunnel.pub user@server:~/
 ```
-Затем на сервере:
+
+Then, on the server:
+
 ```bash
 sudo ./setup-remote.sh "$(cat ~/tunnel.pub)"
-# или так же: sudo ./setup-remote.sh ~/tunnel.pub
+# or, equivalently:
+sudo ./setup-remote.sh ~/tunnel.pub
 ```
 
-Скрипт создаст пользователя `tunnel`, ограничит его ключ
-(`restrict,port-forwarding`), усилит sshd (запрет паролей и root, `AllowUsers`),
-сделает бэкап конфига в `/etc/ssh/sshd_config.bak.pre-tunnel`.
+The script:
 
-### 3. Назад на локальную машину
+- creates a dedicated user (default `tunnel`) with `nologin` shell;
+- installs your key with the restriction `restrict,port-forwarding`
+  (no PTY, X11 or agent forwarding);
+- hardens `sshd`: `PasswordAuthentication no`,
+  `PermitRootLogin no`, `AllowUsers <admin> tunnel`;
+- backs up the old config to `/etc/ssh/sshd_config.bak.pre-tunnel`;
+- optionally installs fail2ban and enables ufw (see `INSTALL_FAIL2BAN`
+  and `ENABLE_UFW`).
+
+### 3. Back on the local machine
 
 ```bash
 ./tunnel.sh start
-./tunnel.sh check     # должен показать IP зарубежного сервера
-source ~/socks-tunnel/proxy-env.sh
-opencode
+./tunnel.sh check        # prints the remote server's public IP
+source ./proxy-env.sh    # exports HTTPS_PROXY/ALL_PROXY/NO_PROXY
+opencode                 # or any CLI that respects proxy env vars
 ```
 
-## Управление
+## Configuration
 
-| Команда | Действие |
+`config.env` holds the local-side settings: remote host/port, the sudo
+user, the tunnel user name, SOCKS address/port, and flags for optional
+remote hardening. `setup-remote.sh` reads its own settings from
+variables at the top of the file (`TUNNEL_USER`, `SSH_PORT`,
+`INSTALL_FAIL2BAN`, `ENABLE_UFW`, `UFW_ALLOW_FROM`).
+
+If you already ran the setup once, re-running is safe (idempotent):
+keys, config blocks and files are only created when missing.
+
+## Scripts
+
+| File | Purpose |
 | --- | --- |
-| `./tunnel.sh start` | запустить туннель |
-| `./tunnel.sh stop` | остановить |
-| `./tunnel.sh restart` | перезапустить |
-| `./tunnel.sh status` | статус процесса и порта |
-| `./tunnel.sh check` | показать внешний IP через туннель |
+| `setup-local.sh` | Local side: keypair + `~/.ssh/config` block, prints the public key |
+| `setup-remote.sh` | Remote side, run manually on the server: user, key, sshd hardening |
+| `tunnel.sh` | `start` / `stop` / `restart` / `status` / `check` |
+| `proxy-env.sh` | `source` to export proxy env vars for the current shell |
+| `config.env` | Local configuration values |
 
-## Состав
+## Tunnel management
 
-- `config.env` — настройки для локальной машины (адрес сервера, порты, имя host-блока).
-- `setup-local.sh` — локальная сторона: ключ + `~/.ssh/config` + вывод ключа.
-- `setup-remote.sh` — серверная сторона, запускается вручную на зарубежном сервере.
-- `tunnel.sh` — start/stop/status/check.
-- `proxy-env.sh` — `source` для экспорта `HTTPS_PROXY` и др. в текущую оболочку.
+| Command | Action |
+| --- | --- |
+| `./tunnel.sh start` | start the tunnel |
+| `./tunnel.sh stop` | stop it |
+| `./tunnel.sh restart` | restart it |
+| `./tunnel.sh status` | process and port status |
+| `./tunnel.sh check` | print the public IP reachable through the tunnel |
 
-## Безопасность
+## Security
 
-- Порт SOCKS слушается только на `127.0.0.1`, без `-g`.
-- Ключ туннеля на сервере ограничен: `restrict,port-forwarding` (без pty, X11, agent forwarding).
-- `sshd`: `PasswordAuthentication no`, `PermitRootLogin no`, `AllowUsers <admin> tunnel`.
-- Прошлая конфигурация sshd сохраняется в `/etc/ssh/sshd_config.bak.pre-tunnel`.
-- Учти: исходящий трафик виден на зарубежном сервере — доверяй ему настолько, насколько это допустимо.
+- The SOCKS port listens only on `127.0.0.1` (never use `-g` or a
+  wildcard bind with `-D`).
+- The tunnel key is restricted on the server:
+  `restrict,port-forwarding`.
+- `sshd` is hardened (no passwords, no root login, explicit
+  `AllowUsers`) and the previous config is backed up.
+- Outbound traffic is visible at the remote server - trust it
+  accordingly. The tunnel does not add anonymity beyond your trust
+  in that server.
+- See [SECURITY.md](docs/SECURITY.md) for the full threat model.
+
+## Troubleshooting
+
+See [TROUBLESHOOTING.md](docs/TROUBLESHOOTING.md) for common issues:
+proxy env vars not picked up, DNS leaks, connection loss, and more.
