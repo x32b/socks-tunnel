@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
-# Источник прокси-переменных для текущей оболочки (не исполнять — source!):
+# Exports proxy env vars for the current shell (do NOT execute - source it):
 #   source ~/socks-tunnel/proxy-env.sh
-# После этого весь процесс, запущенный в этой оболочке (в т.ч. opencode),
-# ходит в интернет через туннель.
+# After sourcing, every process started in this shell (including opencode)
+# routes its internet traffic through the tunnel.
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 source "$SCRIPT_DIR/config.env"
 
@@ -11,5 +11,5 @@ export HTTP_PROXY="$HTTPS_PROXY"
 export ALL_PROXY="$HTTPS_PROXY"
 export NO_PROXY="localhost,127.0.0.1"
 
-echo "Прокси-переменные выставлены на $HTTPS_PROXY"
+echo "Proxy env vars set to $HTTPS_PROXY"
 echo "NO_PROXY=$NO_PROXY"

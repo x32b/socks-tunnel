@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
-# Настройка ЛОКАЛЬНОЙ машины: генерирует ключ туннеля и блок в ~/.ssh/config.
-# НЕ подключается к зарубежному серверу — ключ выводится для переноса самому.
+# Local machine setup: generates the tunnel keypair and an SSH config block.
+# Does NOT connect to the remote server - prints the public key to transfer manually.
 #   ./setup-local.sh
 set -euo pipefail
 
@@ -9,15 +9,15 @@ source "$SCRIPT_DIR/config.env"
 
 KEY="${LOCAL_KEY/#\~/$HOME}"
 
-echo "[1/3] Генерирую ключ для туннеля..."
+echo "[1/3] Generating tunnel keypair..."
 if [[ ! -f "$KEY" ]]; then
   ssh-keygen -t ed25519 -N "" -f "$KEY" -C "socks-tunnel" >/dev/null
-  echo "    создан $KEY"
+  echo "    created $KEY"
 else
-  echo "    уже есть $KEY"
+  echo "    already exists: $KEY"
 fi
 
-echo "[2/3] Проверяю ~/.ssh/config..."
+echo "[2/3] Checking ~/.ssh/config..."
 mkdir -p "$HOME/.ssh"; chmod 700 "$HOME/.ssh"
 touch "$HOME/.ssh/config"; chmod 600 "$HOME/.ssh/config"
 if ! grep -q "^Host $SSHCONFIG_HOST$" "$HOME/.ssh/config"; then
@@ -34,24 +34,24 @@ Host $SSHCONFIG_HOST
     ExitOnForwardFailure yes
     SessionType none
 EOF
-  echo "    добавлен блок Host $SSHCONFIG_HOST"
+  echo "    added Host block '$SSHCONFIG_HOST'"
 else
-  echo "    блок уже есть, пропускаю"
+  echo "    block already present, skipping"
 fi
 
-echo "[3/3] Публичный ключ для переноса на сервер:"
+echo "[3/3] Public key to transfer to the server:"
 echo
 echo "  $KEY.pub"
 echo "  ----------------------------------------------------------"
 cat "$KEY.pub"
 echo "  ----------------------------------------------------------"
 echo
-echo "Дальше сделай сам на ЗАРУБЕЖНОМ сервере:"
-echo "  1. Перенеси туда setup-remote.sh и этот ключ (scp/консоль)."
-echo "  2. На сервере выполни:"
+echo "Next, run the setup on the REMOTE server (manually, on that host):"
+echo "  1. Copy setup-remote.sh and this key there (scp / web console)."
+echo "  2. On the server run:"
 echo "       sudo ./setup-remote.sh \"\$(cat tunnel.pub)\""
 echo
-echo "После этого на локальной машине:"
+echo "Back on the local machine:"
 echo "  ./tunnel.sh start"
 echo "  ./tunnel.sh check"
-echo "  source $SCRIPT_DIR/proxy-env.sh   # а затем opencode"
+echo "  source $SCRIPT_DIR/proxy-env.sh   # then run opencode"
