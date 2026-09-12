@@ -9,7 +9,7 @@ source "$SCRIPT_DIR/config.env"
 export HTTPS_PROXY="socks5://$LOCAL_SOCKS_ADDR:$LOCAL_SOCKS_PORT"
 export HTTP_PROXY="$HTTPS_PROXY"
 export ALL_PROXY="$HTTPS_PROXY"
-export NO_PROXY="localhost,127.0.0.1"
+export NO_PROXY="localhost,127.0.0.1${PROXY_BYPASS:+,$PROXY_BYPASS}"
 
 echo "Proxy env vars set to $HTTPS_PROXY"
 echo "NO_PROXY=$NO_PROXY"
