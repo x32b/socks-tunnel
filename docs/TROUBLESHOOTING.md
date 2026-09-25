@@ -34,7 +34,10 @@ The tunnel key is not installed on the server or is restricted:
 
 You must use the server's out-of-band console (web/panel console).
 
-- Restore the backup: `cp /etc/ssh/sshd_config.bak.pre-tunnel
+- Restore the backup. With drop-ins (`sshd_config.d`) remove/sanitize
+  `/etc/ssh/sshd_config.d/60-socks-tunnel.conf` (backed up as
+  `60-socks-tunnel.conf.bak.pre-tunnel`) and restart ssh. Without
+  drop-ins: `cp /etc/ssh/sshd_config.bak.pre-tunnel
   /etc/ssh/sshd_config && systemctl restart ssh`.
 - Or re-enable password auth, then add a proper key before hardening
   again (use the pre-tunnel backup as a reference).
@@ -54,12 +57,53 @@ You must use the server's out-of-band console (web/panel console).
   as well. If a specific tool still ignores proxies, check its docs and
   set its `HTTPS_PROXY`/`ALL_PROXY` explicitly.
 
+## opencode ignores socks5/socks5h (Bun runtime)
+
+The runtime bundled with OpenCode honours proxy env vars only as an
+`http://` URL and silently ignores `socks5`/`socks5h` schemes, so the
+tunnel seems dead while `curl -x socks5h://...` works.
+
+Fix: enable the HTTP bridge.
+
+- `config.env`: `PROXY_BRIDGE=1` (leave `PROXY_SOCKS5H=1`; the bridge
+  uses the SOCKS endpoint regardless of the scheme string).
+- `./tunnel.sh restart` — it now also starts/restarts `bridge.py`,
+  which listens on `127.0.0.1:18080` and forwards every CONNECT/HTTP
+  request into the SOCKS tunnel.
+- `source ./proxy-env.sh` again — you will see `Proxy env vars set to
+  http://127.0.0.1:18080`.
+- Verify end-to-end before blaming opencode:
+  ```bash
+  curl -x http://127.0.0.1:18080 https://api.ipify.org
+  ```
+  The answer must be the **remote** server's IP.
+
+## HTTP bridge is not listening / WARN in proxy-env.sh
+
+- The bridge only starts when `PROXY_BRIDGE=1` in `config.env` before
+  `tunnel.sh start`. `tunnel.sh` also has dedicated
+  `./tunnel.sh bridge-start` / `bridge-stop`.
+- Check its log and status:
+  ```bash
+  ./tunnel.sh status        # shows "Port 18080 (http bridge): listening"
+  cat run/bridge.log
+  ```
+- `ss -tln | grep 18080` — find who owns the port; change
+  `BRIDGE_PORT` in `config.env` on conflict.
+- `bridge.py` needs Python 3; the script refuses to start without it.
+
 ## DNS still resolves via the blocking network
 
-SSH dynamic forwarding resolves DNS on the client unless the proxy URL
-uses `socks5h://`. Use `socks5h://127.0.0.1:1080` for tools that
-support it. For HTTPS traffic DNS does not leak the request content, but
-the resolved IPs do come from the local (blocked) network.
+With the default `PROXY_SOCKS5H=1` DNS is handled on the remote server
+(`socks5h://`) and nothing leaks from the local network. Two ways to end
+up with local DNS despite this:
+
+- The tool does not understand the `socks5h` scheme (OpenCode/Bun
+  ignores it) and falls back to local resolution and IP addresses. Use
+  the HTTP bridge (`PROXY_BRIDGE=1`) — tunnel.sh + bridge.py route those
+  connections through the tunnel with remote DNS.
+- You set `PROXY_SOCKS5H=0`, which intentionally switches to local
+  resolution (`socks5://`). Only do this when local DNS is trustworthy.
 
 ## Tunnel drops after idle time
 
@@ -92,4 +136,6 @@ block in `~/.ssh/config` (or update its `DynamicForward` line), then run
   sudo systemctl restart ssh || sudo systemctl restart sshd || sudo service sshd restart
   ```
 - Any syntax error would have been caught by `sshd -t`; if it refused,
-  restore the backup config and inspect it.
+  restore the backup config and inspect it. Note that drop-in files are
+  read in `sshd_config.d` order: a later file can override an earlier
+  one — our block always ends with `Match all`.

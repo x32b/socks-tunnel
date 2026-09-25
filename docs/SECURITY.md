@@ -46,22 +46,38 @@ Not protected:
 | `KbdInteractiveAuthentication` | `no` | disables interactive auth |
 | `PermitRootLogin` | `no` | no direct root login |
 | `PubkeyAuthentication` | `yes` | keeps key login enabled |
-| `AllowUsers` | `<admin> tunnel` | only admin and tunnel user |
+| `AllowUsers` | `<admin> tunnel` | only admin and tunnel user (when `SSH_ALLOW_USERS=1`) |
 | key restrictions | `restrict,port-forwarding` | no PTY, X11, agent or command execution via the tunnel key |
+| key `from=` | `<REMOTE_ALLOW_FROM>` | key usable only from the allowed sources |
+| `Match User tunnel` | `Address <list>`, forwarding-only | confines the tunnel user |
 
 `authorized_keys` for the tunnel user uses `restrict,port-forwarding`,
 so the key can only be used for port forwarding - not for a shell,
 X11 forwarding or agent forwarding.
 
-The previous `sshd_config` is backed up to
-`/etc/ssh/sshd_config.bak.pre-tunnel`.
+When `REMOTE_ALLOW_FROM` is set, the key is additionally wrapped with
+`from="<cidr1,cidr2,...>"`, so `sshd` rejects it from any other source
+IP. The tunnel user gets a `Match User` block (with the same `Address`
+list) that forces publickey auth and limits `AllowTcpForwarding local`,
+blocking any other feature of sshd for that account. The block ends with
+`Match all` so it cannot leak into following drop-in files.
+
+Configuration goes to a drop-in, `/etc/ssh/sshd_config.d/60-socks-tunnel.conf`,
+when the distro includes `sshd_config.d`; otherwise it is appended to
+`/etc/ssh/sshd_config`. Either way the previous file is backed up as
+`*.bak.pre-tunnel` on first run, and `sshd -t` must pass before the
+service is reloaded.
 
 ## DNS
 
-SSH dynamic forwarding rely on the client for DNS resolution unless the
-application asks for remote DNS (`socks5h`). For HTTPS traffic this does
-not leak content, but chosen tooling should use `socks5h://` where
-available. The `#check` command uses `socks5h://`.
+SSH dynamic forwarding relies on the client for DNS resolution unless the
+application asks for remote DNS (`socks5h`). With `PROXY_SOCKS5H=1`
+(default) `proxy-env.sh` exports `socks5h://` URLs, so DNS is resolved on
+the remote server and nothing leaks from the local (blocked) network. The
+`check` command uses `socks5h://`. Tools that ignore the `socks5h` scheme
+resolve locally — for those use the HTTP bridge (`PROXY_BRIDGE=1`), whose
+CONNECT requests carry only IP-in-DNS or hostnames that the SOCKS server
+resolves remotely; see TROUBLESHOOTING.md.
 
 ## Recommendations
 
