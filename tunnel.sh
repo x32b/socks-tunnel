@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Tunnel control:  ./tunnel.sh {start|stop|restart|status|check|bridge-start|bridge-stop}
+# Tunnel control:  ./tunnel.sh {start|stop|restart|status|check|install|uninstall}
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -13,11 +13,21 @@ BRIDGE_PIDFILE="$RUN_DIR/bridge.pid"
 BRIDGE_LOG="$RUN_DIR/bridge.log"
 
 is_running() {
-  [[ -f "$PIDFILE" ]] && kill -0 "$(cat "$PIDFILE")" 2>/dev/null
+  if [[ -f "$PIDFILE" ]] && kill -0 "$(cat "$PIDFILE")" 2>/dev/null; then
+    return 0
+  fi
+  pgrep -f "ssh -N $SSHCONFIG_HOST" >/dev/null 2>&1
 }
 
 is_bridge_running() {
-  [[ -f "$BRIDGE_PIDFILE" ]] && kill -0 "$(cat "$BRIDGE_PIDFILE")" 2>/dev/null
+  if [[ -f "$BRIDGE_PIDFILE" ]] && kill -0 "$(cat "$BRIDGE_PIDFILE")" 2>/dev/null; then
+    return 0
+  fi
+  [[ "$PROXY_BRIDGE" == "1" ]] && pgrep -f "$SCRIPT_DIR/bridge.py" >/dev/null 2>&1
+}
+
+systemd_managed() {
+  systemctl --user is-active socks-tunnel.service >/dev/null 2>&1
 }
 
 bridge_start() {
@@ -55,8 +65,100 @@ bridge_stop() {
   rm -f "$BRIDGE_PIDFILE"
 }
 
+install_profile() {
+  # exports proxy vars in interactive shells only when the tunnel port responds
+  local port="$1" marker="# >>> socks-tunnel >>>" trailer="# <<< socks-tunnel <<<"
+  for f in "$HOME/.bashrc" "$HOME/.profile"; do
+    [[ -f "$f" ]] || touch "$f"
+    if grep -qF "$marker" "$f"; then
+      sed -i "/$marker/,/$trailer/d" "$f"
+    fi
+    cat >> "$f" <<EOF
+
+$marker
+if (exec 3<>"/dev/tcp/$LOCAL_SOCKS_ADDR/$port") 2>/dev/null; then
+  source "$SCRIPT_DIR/proxy-env.sh"
+fi
+$trailer
+EOF
+  done
+  echo "    profile vars: $LOCAL_SOCKS_ADDR:$port (conditional on port)"
+}
+
+install_services() {
+  UNIT_DIR="$HOME/.config/systemd/user"
+  mkdir -p "$UNIT_DIR"
+  local bash_bin python_bin
+  bash_bin="$(command -v bash)"
+  python_bin="$(command -v python3 || echo python3)"
+
+  cat > "$UNIT_DIR/socks-tunnel.service" <<EOF
+[Unit]
+Description=SOCKS tunnel to $REMOTE_HOST ($SSHCONFIG_HOST)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+ExecStart=$bash_bin -lc 'source "$SCRIPT_DIR/config.env" && exec ssh -N "\$SSHCONFIG_HOST"'
+Restart=always
+RestartSec=5
+
+[Install]
+WantedBy=default.target
+EOF
+
+  if [[ "$PROXY_BRIDGE" == "1" ]]; then
+    cat > "$UNIT_DIR/socks-bridge.service" <<EOF
+[Unit]
+Description=HTTP CONNECT -> SOCKS5 bridge for opencode
+After=socks-tunnel.service
+Wants=socks-tunnel.service
+
+[Service]
+Type=simple
+ExecStart=$python_bin "$SCRIPT_DIR/bridge.py" --addr "$LOCAL_SOCKS_ADDR" --port "$BRIDGE_PORT" --socks "$LOCAL_SOCKS_ADDR:$LOCAL_SOCKS_PORT"
+Restart=always
+RestartSec=5
+
+[Install]
+WantedBy=default.target
+EOF
+  else
+    rm -f "$UNIT_DIR/socks-bridge.service"
+  fi
+
+  systemctl --user daemon-reload
+  systemctl --user enable --now socks-tunnel.service
+  [[ "$PROXY_BRIDGE" == "1" ]] && systemctl --user enable --now socks-bridge.service
+  loginctl enable-linger "$USER" >/dev/null 2>&1 || true
+  echo "    systemd user services: socks-tunnel.service + ${PROXY_BRIDGE:+socks-bridge.service} (linger on)"
+}
+
 cmd="${1:-status}"
 case "$cmd" in
+  install)
+    bridge_port=("$LOCAL_SOCKS_PORT")
+    [[ "$PROXY_BRIDGE" == "1" ]] && bridge_port=("$BRIDGE_PORT")
+    install_profile "${bridge_port[0]}"
+    install_services
+    echo "Done. Tunnel autostarts on login; no per-shell commands needed."
+    ;;
+  uninstall)
+    systemctl --user disable --now socks-tunnel.service socks-bridge.service >/dev/null 2>&1 || true
+    rm -f "$HOME/.config/systemd/user/socks-tunnel.service" \
+          "$HOME/.config/systemd/user/socks-bridge.service"
+    systemctl --user daemon-reload >/dev/null 2>&1 || true
+    for f in "$HOME/.bashrc" "$HOME/.profile"; do
+      [[ -f "$f" ]] || continue
+      if grep -qF "# >>> socks-tunnel >>>" "$f"; then
+        sed -i '/# >>> socks-tunnel >>>/,/# <<< socks-tunnel <<</d' "$f"
+        echo "    cleaned $f"
+      fi
+    done
+    "$0" stop
+    echo "Done. Autostart and proxy profile settings removed."
+    ;;
   start)
     if is_running; then
       echo "Tunnel already running (pid $(cat "$PIDFILE"))."
@@ -73,6 +175,12 @@ case "$cmd" in
     bridge_start
     ;;
   stop)
+    if systemd_managed; then
+      echo "Tunnel is managed by systemd (linger+autostart)."
+      echo "Use:  systemctl --user stop socks-tunnel.service socks-bridge.service"
+      echo "       (or ./tunnel.sh uninstall to remove autostart entirely)"
+      exit 0
+    fi
     bridge_stop
     if is_running; then
       kill "$(cat "$PIDFILE")" && echo "Tunnel stopped."
@@ -92,7 +200,13 @@ case "$cmd" in
     ;;
   status)
     if is_running; then
-      echo "Tunnel: running (pid $(cat "$PIDFILE"))"
+      if systemd_managed; then
+        echo "Tunnel: running (systemd user service socks-tunnel.service)"
+      elif [[ -f "$PIDFILE" ]]; then
+        echo "Tunnel: running (pid $(cat "$PIDFILE"))"
+      else
+        echo "Tunnel: running"
+      fi
     else
       echo "Tunnel: not running"
     fi
@@ -120,7 +234,7 @@ case "$cmd" in
       || { echo "Check failed - tunnel or network is down."; exit 1; }
     ;;
   *)
-    echo "Usage: $0 {start|stop|restart|status|check|bridge-start|bridge-stop}"
+    echo "Usage: $0 {start|stop|restart|status|check|bridge-start|bridge-stop|install|uninstall}"
     exit 1
     ;;
 esac
