@@ -32,6 +32,7 @@ Host $SSHCONFIG_HOST
     ServerAliveInterval 30
     ServerAliveCountMax 3
     ExitOnForwardFailure yes
+    StrictHostKeyChecking accept-new
     SessionType none
 EOF
   echo "    added Host block '$SSHCONFIG_HOST'"
