@@ -6,8 +6,10 @@ set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 source "$SCRIPT_DIR/config.env"
+[[ -f "$SCRIPT_DIR/config.local.env" ]] && source "$SCRIPT_DIR/config.local.env"
 
 KEY="${LOCAL_KEY/#\~/$HOME}"
+mkdir -p "$HOME/.ssh"; chmod 700 "$HOME/.ssh"
 
 echo "[1/3] Generating tunnel keypair..."
 if [[ ! -f "$KEY" ]]; then

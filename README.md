@@ -38,28 +38,42 @@ bundled with OpenCode), set `PROXY_BRIDGE=1` in `config.env` — a tiny
 
 ```bash
 cd socks-tunnel
-cp config.env config.local.env   # optional: edit settings
-./setup-local.sh
+./setup.sh
 ```
 
-This generates the keypair `~/.ssh/tunnel` (and `.pub`), appends a
-`Host tunnel` block to `~/.ssh/config`, and prints the public key you
-need for the next step. It never connects to the remote server.
+`setup.sh` first asks **which machine** you are on (`c`lient or `s`erver):
+the same single entry point drives both setups.
 
-### 2. Remote server (run manually on that host)
+On a client (`./setup.sh client`) it asks for the relay host, SSH port, the
+sudo user on the relay, the tunnel user name and the SOCKS port, then
+writes your answers to `config.local.env` (gitignored local overrides
+sourced after `config.env`) and runs `setup-local.sh`, which generates the
+keypair `~/.ssh/tunnel` (and `.pub`), appends a `Host tunnel` block to
+`~/.ssh/config`, and prints the public key you need for the next step. It
+never connects to the remote server.
 
-Transfer the script and the public key there:
+Both modes accept a **single public IP of the client** to look up its
+ISP/ASN and automatically fetch the full announced IPv4 prefix list for
+`REMOTE_ALLOW_FROM` (via hackertarget + RIPE Stat) - you no longer have to
+hand-copy the CIDR table.
+
+Prefer to edit settings by hand instead? Skip `setup.sh` and change
+`config.env` directly - the interactive wrapper is just a convenience.
+
+### 2. Remote server (relay)
+
+Easiest: copy the whole repo over and run the built-in server branch
+(does everything interactively, including the allow-list auto-fetch):
+
+```bash
+sudo ./setup.sh server
+```
+
+Manually (transfer `setup-remote.sh` and the public key):
 
 ```bash
 scp socks-tunnel/setup-remote.sh ~/.ssh/tunnel.pub user@server:~/
-```
-
-Then, on the server:
-
-```bash
-sudo ./setup-remote.sh "$(cat ~/tunnel.pub)"
-# or, equivalently:
-sudo ./setup-remote.sh ~/tunnel.pub
+sudo ./setup-remote.sh "$(cat ~/tunnel.pub)"   # or:  ~/tunnel.pub
 ```
 
 The script:
@@ -114,7 +128,9 @@ Keep the LLM provider API domains in `PROXY_BYPASS`
 `config.env` holds the local-side settings: remote host/port, the sudo
 user, the tunnel user name, SOCKS address/port, the optional
 `REMOTE_ALLOW_FROM` allow-list, DNS mode, the HTTP bridge switch, and
-flags for optional remote hardening.
+flags for optional remote hardening. If a `config.local.env` exists next
+to it (created by `setup.sh`), its values are sourced after `config.env`
+and take precedence - keep it out of version control.
 
 If you already ran the setup once, re-running is safe (idempotent):
 keys, config blocks and files are only created when missing.
@@ -123,12 +139,14 @@ keys, config blocks and files are only created when missing.
 
 | File | Purpose |
 | --- | --- |
+| `setup.sh` | Interactive entry point for either side: asks `client` or `server`, writes `config.local.env`, runs `setup-local.sh` / `setup-remote.sh`; can auto-fetch ISP/ASN prefixes from one client IP |
 | `setup-local.sh` | Local side: keypair + `~/.ssh/config` block, prints the public key |
 | `setup-remote.sh` | Remote side, run manually on the server: user, key, sshd drop-in + hardening |
-| `tunnel.sh` | `start` / `stop` / `restart` / `status` / `check` (+ `bridge-start`/`bridge-stop`) |
+| `tunnel.sh` | `start` / `stop` / `restart` / `status` / `check` (+ `bridge-start`/`bridge-stop`, `install`/`uninstall`) |
 | `bridge.py` | Local HTTP CONNECT → SOCKS5 forwarder (used when `PROXY_BRIDGE=1`) |
 | `proxy-env.sh` | `source` to export proxy env vars for the current shell |
-| `config.env` | Configuration values (local and remote) |
+| `config.env` | Default configuration values (local and remote) |
+| `config.local.env` | Optional local overrides created by `setup.sh` (gitignored) |
 
 ## Tunnel management
 

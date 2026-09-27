@@ -4,6 +4,7 @@ set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 source "$SCRIPT_DIR/config.env"
+[[ -f "$SCRIPT_DIR/config.local.env" ]] && source "$SCRIPT_DIR/config.local.env"
 
 RUN_DIR="$SCRIPT_DIR/run"
 mkdir -p "$RUN_DIR"
@@ -117,7 +118,7 @@ Wants=socks-tunnel.service
 
 [Service]
 Type=simple
-ExecStart=$python_bin "$SCRIPT_DIR/bridge.py" --addr "$LOCAL_SOCKS_ADDR" --port "$BRIDGE_PORT" --socks "$LOCAL_SOCKS_ADDR:$LOCAL_SOCKS_PORT"
+ExecStart=$python_bin "$SCRIPT_DIR/bridge.py" --port "$BRIDGE_PORT" --socks "$LOCAL_SOCKS_ADDR:$LOCAL_SOCKS_PORT"
 Restart=always
 RestartSec=5
 

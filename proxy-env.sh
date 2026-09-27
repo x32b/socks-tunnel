@@ -5,6 +5,7 @@
 # routes its internet traffic through the tunnel.
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 source "$SCRIPT_DIR/config.env"
+[[ -f "$SCRIPT_DIR/config.local.env" ]] && source "$SCRIPT_DIR/config.local.env"
 
 if [[ "$PROXY_BRIDGE" == "1" ]]; then
   # Plain HTTP proxy (CONNECT) that forwards into the local SOCKS tunnel.

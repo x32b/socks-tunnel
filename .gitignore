@@ -1,3 +1,4 @@
 run/
 *.log
 __pycache__/
+config.local.env
