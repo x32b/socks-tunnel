@@ -144,6 +144,8 @@ keys, config blocks and files are only created when missing.
 
 - The SOCKS port listens only on `127.0.0.1` (never use `-g` or a
   wildcard bind with `-D`).
+- The HTTP bridge binds `127.0.0.1` unconditionally (`--addr` does not
+  exist); it also refuses to talk to a non-loopback SOCKS address.
 - The tunnel key is restricted on the server:
   `restrict,port-forwarding`, and can be bound to a source allow-list
   (`REMOTE_ALLOW_FROM`, e.g. your ISP's announced prefixes).

@@ -7,7 +7,9 @@ This tool exposes plain HTTP CONNECT proxying on 127.0.0.1 and relays every
 tunnel through the local SOCKS5 listener started by `ssh -D` / tunnel.sh.
 
 Pure Python 3 standard library - no pip dependencies.
-Usage:  python3 bridge.py --addr 127.0.0.1 --port 18080 --socks 127.0.0.1:1080
+The HTTP listener ALWAYS binds 127.0.0.1 (loopback only) - this is not
+configurable, so the bridge can never become an open proxy for the LAN.
+Usage:  python3 bridge.py --port 18080 --socks 127.0.0.1:1080
 """
 import argparse
 import os
@@ -176,17 +178,37 @@ class Threaded(socketserver.ThreadingMixIn, socketserver.TCPServer):
     daemon_threads = True
 
 
+BIND_ADDR = "127.0.0.1"  # loopback only, deliberately not configurable
+
+
+def is_loopback(host):
+    """True when host is a loopback address (IP or hostname resolving only to loopback)."""
+    if host in ("localhost", "127.0.0.1", "::1"):
+        return True
+    if host.startswith("127."):
+        octets = host.split(".")
+        return len(octets) == 4 and all(o.isdigit() and 0 <= int(o) <= 255 for o in octets)
+    try:
+        addrs = socket.getaddrinfo(host, 1, socket.AF_UNSPEC, socket.SOCK_STREAM)
+    except socket.gaierror:
+        return False
+    return addrs and all(
+        (a[4][0] == "::1") or a[4][0].startswith("127.")
+        for a in addrs)
+
+
 def main():
     global SOCKS
     ap = argparse.ArgumentParser()
-    ap.add_argument("--addr", default="127.0.0.1")
     ap.add_argument("--port", type=int, default=18080)
     ap.add_argument("--socks", default="127.0.0.1:1080")
     args = ap.parse_args()
     host, _, port = args.socks.rpartition(":")
+    if not is_loopback(host):
+        sys.exit("refusing to use a non-loopback SOCKS address: %s (bridge is local-only)" % args.socks)
     SOCKS = (host, int(port))
     try:
-        Threaded((args.addr, args.port), Handler).serve_forever()
+        Threaded((BIND_ADDR, args.port), Handler).serve_forever()
     except KeyboardInterrupt:
         sys.exit(0)
 

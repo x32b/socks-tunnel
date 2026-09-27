@@ -34,7 +34,7 @@ bridge_start() {
     return 1
   fi
   nohup python3 "$SCRIPT_DIR/bridge.py" \
-      --addr "$LOCAL_SOCKS_ADDR" --port "$BRIDGE_PORT" \
+      --port "$BRIDGE_PORT" \
       --socks "$LOCAL_SOCKS_ADDR:$LOCAL_SOCKS_PORT" \
       >/dev/null 2>"$BRIDGE_LOG" &
   echo $! > "$BRIDGE_PIDFILE"

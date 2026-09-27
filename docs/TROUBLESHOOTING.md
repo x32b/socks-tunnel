@@ -83,6 +83,8 @@ Fix: enable the HTTP bridge.
 - The bridge only starts when `PROXY_BRIDGE=1` in `config.env` before
   `tunnel.sh start`. `tunnel.sh` also has dedicated
   `./tunnel.sh bridge-start` / `bridge-stop`.
+- The bridge always binds `127.0.0.1`; if something else owns `BRIDGE_PORT`
+  on loopback, change `BRIDGE_PORT` in `config.env` on conflict.
 - Check its log and status:
   ```bash
   ./tunnel.sh status        # shows "Port 18080 (http bridge): listening"
